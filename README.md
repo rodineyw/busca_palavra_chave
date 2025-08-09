@@ -1,9 +1,3 @@
-Então vamos fazer o `README.md` com **passo a passo ilustrado**.
-Você só vai precisar depois substituir os caminhos das imagens (`/imagens/...`) pelas capturas reais do seu programa.
-
-Segue a versão com ilustrações:
-
-```markdown
 # 📝 Buscador de Palavras-chave em Planilhas Excel
 
 ## 📌 1. O que o programa faz
@@ -119,4 +113,3 @@ Clique em **Salvar Resultados** e escolha onde gravar.
 - Evite planilhas com mais de **200 mil linhas** sem filtro de coluna.
 
 ---
-```
