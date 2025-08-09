@@ -7,7 +7,7 @@ O **Buscador de Palavras-chave em Excel** permite procurar palavras ou expressõ
 - **Busca exata**  
 - **Busca por padrão (regex)**  
 - **Busca por similaridade (fuzzy)** com ajuste de porcentagem  
-- **Busca radical (stem)** em português
+- **Busca radical (stem)** 
 
 Ele localiza todas as ocorrências e exibe:
 
