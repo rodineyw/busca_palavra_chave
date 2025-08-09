@@ -1,14 +1,16 @@
 # 📝 Buscador de Palavras-chave em Planilhas Excel
 
 ## 📌 1. O que o programa faz
+
 O **Buscador de Palavras-chave em Excel** permite procurar palavras ou expressões dentro de planilhas, com suporte para diferentes modos de busca:
 
 - **Busca exata**  
 - **Busca por padrão (regex)**  
 - **Busca por similaridade (fuzzy)** com ajuste de porcentagem  
-- **Busca por radical (stem)** em português
+- **Busca radical (stem)** em português
 
 Ele localiza todas as ocorrências e exibe:
+
 - Número total de ocorrências  
 - Resumo de quantas vezes cada palavra apareceu  
 - Linhas e colunas onde encontrou  
@@ -21,6 +23,7 @@ Também permite **salvar os resultados** em um novo Excel com todas as colunas o
 ## 🚀 2. Como usar
 
 ### **Passo 1 – Abrir o programa**
+
 Abra o arquivo `Busca por Palavra-chave.exe`.
 
 ![Tela inicial](/imagens/tela_inicial.png)
@@ -28,6 +31,7 @@ Abra o arquivo `Busca por Palavra-chave.exe`.
 ---
 
 ### **Passo 2 – Selecionar o arquivo**
+
 Clique em **Selecionar Arquivo** e escolha seu Excel.
 
 ![Seleção de arquivo](/imagens/selecionar_arquivo.png)
@@ -35,6 +39,7 @@ Clique em **Selecionar Arquivo** e escolha seu Excel.
 ---
 
 ### **Passo 3 – Escolher a aba**
+
 No campo “Aba”, escolha a planilha onde deseja buscar.
 
 ![Seleção de aba](/imagens/selecionar_aba.png)
@@ -42,19 +47,21 @@ No campo “Aba”, escolha a planilha onde deseja buscar.
 ---
 
 ### **Passo 4 – Inserir palavras-chave**
+
 Digite as palavras separadas por vírgula:
+
 ```
 
 arquivamento, desarquivamento, arquivar
 
 ```
 
-
 ![Inserindo palavras](/imagens/inserir_palavras.png)
 
 ---
 
 ### **Passo 5 – Configurar opções**
+
 - **Modo de busca**:
   - `exato` → Igualdade literal.
   - `padrão` → Padrões avançados.
@@ -68,6 +75,7 @@ arquivamento, desarquivamento, arquivar
 ---
 
 ### **Passo 6 – Executar a busca**
+
 Clique em **Buscar** e aguarde.
 
 ![Progresso da busca](/imagens/busca_em_andamento.png)
@@ -75,6 +83,7 @@ Clique em **Buscar** e aguarde.
 ---
 
 ### **Passo 7 – Resultados**
+
 Veja o total de ocorrências, resumo por palavra e detalhes de cada linha.
 
 ![Resultados](/imagens/resultados_busca.png)
@@ -82,6 +91,7 @@ Veja o total de ocorrências, resumo por palavra e detalhes de cada linha.
 ---
 
 ### **Passo 8 – Salvar resultados**
+
 Clique em **Salvar Resultados** e escolha onde gravar.
 
 ![Salvar resultados](/imagens/salvar_resultados.png)
@@ -100,6 +110,7 @@ Clique em **Salvar Resultados** e escolha onde gravar.
 ---
 
 ## 💡 4. Dicas
+
 - Limitar colunas acelera buscas grandes.  
 - No **similaridade**, valores muito baixos (<70) aumentam falsos positivos.  
 - **padrão** exige conhecimento em expressões regulares.  
@@ -108,6 +119,7 @@ Clique em **Salvar Resultados** e escolha onde gravar.
 ---
 
 ## ⚙️ 5. Requisitos
+
 - Windows 10 ou superior.  
 - Não precisa ter Excel instalado.  
 - Evite planilhas com mais de **200 mil linhas** sem filtro de coluna.
