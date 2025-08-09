@@ -1,17 +1,15 @@
-import os
+import logging
 import re
 import threading
-import logging
-from typing import List, Dict
-
-import pandas as pd
-import unicodedata
 import tkinter as tk
-from tkinter import ttk, filedialog, messagebox, scrolledtext
+import unicodedata
+from tkinter import filedialog, messagebox, scrolledtext, ttk
+from typing import Dict, List
 
-from rapidfuzz import fuzz
 import nltk
+import pandas as pd
 from nltk.stem import RSLPStemmer
+from rapidfuzz import fuzz
 
 
 class ExcelKeywordSearcherGUI:
@@ -112,12 +110,12 @@ class ExcelKeywordSearcherGUI:
 
         # Modo
         ttk.Label(lf_ops, text="Modo de busca:").grid(row=0, column=0, sticky="w")
-        self.modo_busca = tk.StringVar(value="fuzzy")  # exato | regex | fuzzy | stem
+        self.modo_busca = tk.StringVar(value="similar")  # exato | regex | fuzzy | stem
         ttk.Combobox(lf_ops, textvariable=self.modo_busca, state="readonly",
-                     values=["exato", "regex", "fuzzy", "stem"]).grid(row=0, column=1, sticky="ew", padx=(6, 12))
+                     values=["exato", "padrão", "similaridade", "radical"]).grid(row=0, column=1, sticky="ew", padx=(6, 12))
 
         # Limiar fuzzy
-        ttk.Label(lf_ops, text="Limiar fuzzy:").grid(row=0, column=2, sticky="w")
+        ttk.Label(lf_ops, text="% de Similaridade:").grid(row=0, column=2, sticky="w")
         self.limiar_fuzzy = tk.IntVar(value=80)
         
         self.lbl_limiar = ttk.Label(lf_ops, text=str(self.limiar_fuzzy.get()))
@@ -305,7 +303,7 @@ class ExcelKeywordSearcherGUI:
                 cols = [c.strip() for c in self.colunas_var.get().split(",") if c.strip()]
             self.resultados = self.buscar_palavras_chave(palavras, cols)
             self.root.after(0, self._finalizar_busca)
-        except Exception as e:
+        except Exception:
             logging.exception("Erro durante a busca")
             self.root.after(0, lambda: self._erro_busca(str(e)))
 
