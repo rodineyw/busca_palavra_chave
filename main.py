@@ -1,564 +1,512 @@
+import os
+import re
+import threading
+import logging
+from typing import List, Dict
+
 import pandas as pd
 import unicodedata
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox, scrolledtext
-from typing import List, Dict
-import os
-import threading
+
+from rapidfuzz import fuzz
+import nltk
+from nltk.stem import RSLPStemmer
+
 
 class ExcelKeywordSearcherGUI:
     def __init__(self):
-        """
-        Inicializa a interface gráfica do buscador
-        """
-        self.df = None
-        self.arquivo_path = None
-        self.resultados = None
-        
-        # Cria a janela principal
+        # ---- Estado ----
+        self.df: pd.DataFrame | None = None
+        self.arquivo_path: str | None = None
+        self.resultados: Dict | None = None
+        self.norm_cache: dict[str, pd.Series] = {}
+        self.stem_cache: dict[str, pd.Series] = {}
+
+        # ---- Logging ----
+        logging.basicConfig(
+            level=logging.INFO,
+            format="%(asctime)s %(levelname)s %(message)s"
+        )
+        self._ensure_nltk()
+
+        # ---- Stemmer ----
+        self.stemmer = RSLPStemmer()
+
+        # ---- UI raiz ----
         self.root = tk.Tk()
         self.root.title("🔍 Buscador de Palavras-chave em Excel")
-        self.root.geometry("800x700")
+        self.root.geometry("900x760")
         self.root.resizable(True, True)
-        
-        # Configura o estilo
-        self.style = ttk.Style()
-        self.style.theme_use('clam')
-        
-        self.criar_interface()
-        
+
+        style = ttk.Style()
+        try:
+            style.theme_use("clam")
+        except Exception:
+            pass
+
+        self._build_ui()
+
+    # ===================== Utilidades de texto =====================
     def normalizar_texto(self, texto: str) -> str:
-        """
-        Remove acentos, converte para minúsculas e normaliza o texto
-        """
         if not isinstance(texto, str):
             texto = str(texto)
-        
-        texto_sem_acento = unicodedata.normalize('NFD', texto)
-        texto_sem_acento = ''.join(char for char in texto_sem_acento 
-                                  if unicodedata.category(char) != 'Mn')
-        
-        return texto_sem_acento.lower()
-    
-    def criar_interface(self):
-        """
-        Cria todos os elementos da interface gráfica
-        """
-        # Frame principal
-        main_frame = ttk.Frame(self.root, padding="10")
-        main_frame.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
-        
-        # Configura redimensionamento
+        t = unicodedata.normalize('NFD', texto)
+        t = ''.join(ch for ch in t if unicodedata.category(ch) != 'Mn')
+        return t.lower()
+
+    def stem_pt(self, s: str) -> str:
+        tokens = re.findall(r"\w+", self.normalizar_texto(s))
+        return " ".join(self.stemmer.stem(t) for t in tokens)
+
+    # ===================== UI =====================
+    def _build_ui(self):
+        main = ttk.Frame(self.root, padding=10)
+        main.grid(row=0, column=0, sticky="nsew")
         self.root.columnconfigure(0, weight=1)
         self.root.rowconfigure(0, weight=1)
-        main_frame.columnconfigure(1, weight=1)
-        
-        # Título
-        titulo = ttk.Label(main_frame, text="🔍 Buscador de Palavras-chave em Excel", 
-                          font=('Arial', 16, 'bold'))
-        titulo.grid(row=0, column=0, columnspan=3, pady=(0, 20))
-        
-        # Seção 1: Seleção de arquivo
-        arquivo_frame = ttk.LabelFrame(main_frame, text="📂 Arquivo Excel", padding="10")
-        arquivo_frame.grid(row=1, column=0, columnspan=3, sticky=(tk.W, tk.E), pady=(0, 10))
-        arquivo_frame.columnconfigure(1, weight=1)
-        
-        ttk.Label(arquivo_frame, text="Arquivo:").grid(row=0, column=0, sticky=tk.W, padx=(0, 5))
-        
+        main.columnconfigure(1, weight=1)
+        main.rowconfigure(6, weight=1)
+
+        ttk.Label(main, text="🔍 Buscador de Palavras-chave em Excel",
+                  font=('Arial', 16, 'bold')).grid(row=0, column=0, columnspan=3, pady=(0, 12))
+
+        # Arquivo
+        lf_arq = ttk.LabelFrame(main, text="📂 Arquivo Excel", padding=10)
+        lf_arq.grid(row=1, column=0, columnspan=3, sticky="ew", pady=(0, 8))
+        lf_arq.columnconfigure(1, weight=1)
+
+        ttk.Label(lf_arq, text="Arquivo:").grid(row=0, column=0, sticky="w")
         self.arquivo_var = tk.StringVar()
-        self.arquivo_entry = ttk.Entry(arquivo_frame, textvariable=self.arquivo_var, 
-                                      state='readonly', width=50)
-        self.arquivo_entry.grid(row=0, column=1, sticky=(tk.W, tk.E), padx=(0, 5))
-        
-        self.btn_selecionar = ttk.Button(arquivo_frame, text="Selecionar Arquivo", 
-                                        command=self.selecionar_arquivo)
-        self.btn_selecionar.grid(row=0, column=2)
-        
-        # Info do arquivo
-        self.info_arquivo = ttk.Label(arquivo_frame, text="Nenhum arquivo selecionado", 
-                                     foreground='gray')
-        self.info_arquivo.grid(row=1, column=0, columnspan=3, sticky=tk.W, pady=(5, 0))
-        
-        # Seção 2: Seleção de aba
-        aba_frame = ttk.LabelFrame(main_frame, text="📋 Aba do Excel", padding="10")
-        aba_frame.grid(row=2, column=0, columnspan=3, sticky=(tk.W, tk.E), pady=(0, 10))
-        aba_frame.columnconfigure(1, weight=1)
-        
-        ttk.Label(aba_frame, text="Aba:").grid(row=0, column=0, sticky=tk.W, padx=(0, 5))
-        
+        ttk.Entry(lf_arq, textvariable=self.arquivo_var, state="readonly").grid(row=0, column=1, sticky="ew", padx=6)
+        ttk.Button(lf_arq, text="Selecionar", command=self.selecionar_arquivo).grid(row=0, column=2)
+        self.info_arquivo = ttk.Label(lf_arq, text="Nenhum arquivo selecionado", foreground="gray")
+        self.info_arquivo.grid(row=1, column=0, columnspan=3, sticky="w", pady=(6, 0))
+
+        # Aba
+        lf_aba = ttk.LabelFrame(main, text="📋 Aba do Excel", padding=10)
+        lf_aba.grid(row=2, column=0, columnspan=3, sticky="ew", pady=(0, 8))
+        lf_aba.columnconfigure(1, weight=1)
+
+        ttk.Label(lf_aba, text="Aba:").grid(row=0, column=0, sticky="w")
         self.aba_var = tk.StringVar()
-        self.aba_combo = ttk.Combobox(aba_frame, textvariable=self.aba_var, 
-                                     state='readonly', width=30)
-        self.aba_combo.grid(row=0, column=1, sticky=(tk.W, tk.E), padx=(0, 5))
-        
-        # Seção 3: Palavras-chave
-        palavras_frame = ttk.LabelFrame(main_frame, text="🔍 Palavras-chave para Buscar", padding="10")
-        palavras_frame.grid(row=3, column=0, columnspan=3, sticky=(tk.W, tk.E), pady=(0, 10))
-        palavras_frame.columnconfigure(0, weight=1)
-        
-        ttk.Label(palavras_frame, text="Digite as palavras separadas por vírgula:").grid(row=0, column=0, sticky=tk.W)
-        
+        self.aba_combo = ttk.Combobox(lf_aba, textvariable=self.aba_var, state="readonly")
+        self.aba_combo.grid(row=0, column=1, sticky="ew", padx=6)
+        self.aba_combo.bind('<<ComboboxSelected>>', self.trocar_aba)
+
+        # Palavras
+        lf_pal = ttk.LabelFrame(main, text="🔎 Palavras-chave", padding=10)
+        lf_pal.grid(row=3, column=0, columnspan=3, sticky="ew", pady=(0, 8))
+        lf_pal.columnconfigure(0, weight=1)
+
+        ttk.Label(lf_pal, text="Digite separadas por vírgula:").grid(row=0, column=0, sticky="w")
         self.palavras_var = tk.StringVar()
-        self.palavras_entry = ttk.Entry(palavras_frame, textvariable=self.palavras_var, 
-                                       font=('Arial', 11), width=60)
-        self.palavras_entry.grid(row=1, column=0, sticky=(tk.W, tk.E), pady=(5, 0))
+        ttk.Entry(lf_pal, textvariable=self.palavras_var).grid(row=1, column=0, sticky="ew", pady=4)
+        ttk.Label(lf_pal, text="Ex.: desarquivamento, arquivamento, arquivar", foreground="gray").grid(row=2, column=0, sticky="w")
+
+        # Opções
+        lf_ops = ttk.LabelFrame(main, text="⚙️ Opções", padding=10)
+        lf_ops.grid(row=4, column=0, columnspan=3, sticky="ew", pady=(0, 8))
+        for i in range(6):
+            lf_ops.columnconfigure(i, weight=1)
+
+        # Modo
+        ttk.Label(lf_ops, text="Modo de busca:").grid(row=0, column=0, sticky="w")
+        self.modo_busca = tk.StringVar(value="fuzzy")  # exato | regex | fuzzy | stem
+        ttk.Combobox(lf_ops, textvariable=self.modo_busca, state="readonly",
+                     values=["exato", "regex", "fuzzy", "stem"]).grid(row=0, column=1, sticky="ew", padx=(6, 12))
+
+        # Limiar fuzzy
+        ttk.Label(lf_ops, text="Limiar fuzzy:").grid(row=0, column=2, sticky="w")
+        self.limiar_fuzzy = tk.IntVar(value=80)
         
-        # Exemplo
-        exemplo_label = ttk.Label(palavras_frame, 
-                                 text="Exemplo: Responsável, gerente, coordenador", 
-                                 foreground='gray', font=('Arial', 9))
-        exemplo_label.grid(row=2, column=0, sticky=tk.W, pady=(2, 0))
+        self.lbl_limiar = ttk.Label(lf_ops, text=str(self.limiar_fuzzy.get()))
+        self.lbl_limiar.grid(row=0, column=4, sticky="w")
         
-        # Seção 4: Opções avançadas
-        opcoes_frame = ttk.LabelFrame(main_frame, text="⚙️ Opções Avançadas", padding="10")
-        opcoes_frame.grid(row=4, column=0, columnspan=3, sticky=(tk.W, tk.E), pady=(0, 10))
-        opcoes_frame.columnconfigure(1, weight=1)
+        self.slider = ttk.Scale(
+            lf_ops, from_=60, to=95, orient="horizontal",
+            command=self._on_slider_change
+        )
         
-        # Checkbox para colunas específicas
+        self.slider = ttk.Scale(lf_ops, from_=60, to=95, orient="horizontal",
+                                command=lambda v: self.lbl_limiar.config(text=str(int(float(v)))))
+        self.slider.grid(row=0, column=3, sticky="ew", padx=6)
+        self.slider.set(self.limiar_fuzzy.get())
+
+        # Colunas específicas
         self.usar_colunas_especificas = tk.BooleanVar()
-        checkbox_colunas = ttk.Checkbutton(opcoes_frame, 
-                                          text="Buscar apenas em colunas específicas", 
-                                          variable=self.usar_colunas_especificas,
-                                          command=self.toggle_colunas_especificas)
-        checkbox_colunas.grid(row=0, column=0, columnspan=2, sticky=tk.W)
-        
-        # Entry para colunas específicas
-        ttk.Label(opcoes_frame, text="Colunas:").grid(row=1, column=0, sticky=tk.W, padx=(20, 5))
-        
+        ttk.Checkbutton(lf_ops, text="Buscar apenas em colunas específicas",
+                        variable=self.usar_colunas_especificas,
+                        command=self.toggle_colunas_especificas).grid(row=1, column=0, columnspan=2, sticky="w", pady=(6, 0))
+
+        ttk.Label(lf_ops, text="Colunas:").grid(row=1, column=2, sticky="w", pady=(6, 0))
         self.colunas_var = tk.StringVar()
-        self.colunas_entry = ttk.Entry(opcoes_frame, textvariable=self.colunas_var, 
-                                      state='disabled', width=40)
-        self.colunas_entry.grid(row=1, column=1, sticky=(tk.W, tk.E), padx=(0, 5))
+        self.colunas_entry = ttk.Entry(lf_ops, textvariable=self.colunas_var, state='disabled')
+        self.colunas_entry.grid(row=1, column=3, columnspan=2, sticky="ew", padx=6, pady=(6, 0))
+        self.btn_mostrar_colunas = ttk.Button(lf_ops, text="Ver Colunas", command=self.mostrar_colunas, state='disabled')
+        self.btn_mostrar_colunas.grid(row=1, column=5, sticky="e", pady=(6, 0))
+
+        # Ações
+        acts = ttk.Frame(main)
+        acts.grid(row=5, column=0, columnspan=3, pady=8)
+        ttk.Button(acts, text="🔍 Buscar", command=self.executar_busca, style='Accent.TButton').pack(side="left", padx=5)
+        ttk.Button(acts, text="🗑️ Limpar", command=self.limpar_campos).pack(side="left", padx=5)
+        self.btn_salvar = ttk.Button(acts, text="💾 Salvar Resultados", command=self.salvar_resultados, state='disabled')
+        self.btn_salvar.pack(side="left", padx=5)
+
+        # Resultados
+        lf_res = ttk.LabelFrame(main, text="📊 Resultados", padding=10)
+        lf_res.grid(row=6, column=0, columnspan=3, sticky="nsew")
+        lf_res.columnconfigure(0, weight=1)
+        lf_res.rowconfigure(0, weight=1)
+
+        self.resultado_text = scrolledtext.ScrolledText(lf_res, height=18, font=('Consolas', 10), wrap="word")
+        self.resultado_text.grid(row=0, column=0, sticky="nsew")
+
+        self.progress = ttk.Progressbar(main, mode='indeterminate')
+        self.progress.grid(row=7, column=0, columnspan=3, sticky="ew", pady=(8, 0))
         
-        # Botão para mostrar colunas disponíveis
-        self.btn_mostrar_colunas = ttk.Button(opcoes_frame, text="Ver Colunas", 
-                                             command=self.mostrar_colunas, state='disabled')
-        self.btn_mostrar_colunas.grid(row=1, column=2)
-        
-        # Seção 5: Botões de ação
-        botoes_frame = ttk.Frame(main_frame)
-        botoes_frame.grid(row=5, column=0, columnspan=3, pady=(10, 0))
-        
-        self.btn_buscar = ttk.Button(botoes_frame, text="🔍 Buscar", 
-                                    command=self.executar_busca, 
-                                    style='Accent.TButton')
-        self.btn_buscar.pack(side=tk.LEFT, padx=(0, 10))
-        
-        self.btn_limpar = ttk.Button(botoes_frame, text="🗑️ Limpar", 
-                                    command=self.limpar_campos)
-        self.btn_limpar.pack(side=tk.LEFT, padx=(0, 10))
-        
-        self.btn_salvar = ttk.Button(botoes_frame, text="💾 Salvar Resultados", 
-                                    command=self.salvar_resultados, state='disabled')
-        self.btn_salvar.pack(side=tk.LEFT)
-        
-        # Seção 6: Resultados
-        resultados_frame = ttk.LabelFrame(main_frame, text="📊 Resultados", padding="10")
-        resultados_frame.grid(row=6, column=0, columnspan=3, sticky=(tk.W, tk.E, tk.N, tk.S), pady=(10, 0))
-        resultados_frame.columnconfigure(0, weight=1)
-        resultados_frame.rowconfigure(0, weight=1)
-        
-        # Área de texto para resultados com scroll
-        self.resultado_text = scrolledtext.ScrolledText(resultados_frame, 
-                                                       height=15, width=80, 
-                                                       font=('Consolas', 10),
-                                                       wrap=tk.WORD)
-        self.resultado_text.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
-        
-        # Barra de progresso
-        self.progress = ttk.Progressbar(main_frame, mode='indeterminate')
-        self.progress.grid(row=7, column=0, columnspan=3, sticky=(tk.W, tk.E), pady=(10, 0))
-        
-        # Configura redimensionamento da seção de resultados
-        main_frame.rowconfigure(6, weight=1)
-        
+    def _on_slider_change(self, v):
+        try:
+            val = int(float(v))
+        except Exception:
+            val = self.limiar_fuzzy.get()
+        self.limiar_fuzzy.set(val)
+        self.lbl_limiar.config(text=str(val))
+
+
+    # ===================== Arquivo/Aba =====================
     def selecionar_arquivo(self):
-        """
-        Abre diálogo para selecionar arquivo Excel
-        """
-        arquivo = filedialog.askopenfilename(
+        arq = filedialog.askopenfilename(
             title="Selecionar arquivo Excel",
             filetypes=[("Arquivos Excel", "*.xlsx *.xls"), ("Todos os arquivos", "*.*")]
         )
-        
-        if arquivo:
-            self.arquivo_var.set(arquivo)
-            self.arquivo_path = arquivo
-            self.carregar_arquivo_info()
-    
-    def carregar_arquivo_info(self):
-        """
-        Carrega informações do arquivo e popula combobox de abas
-        """
+        if not arq:
+            return
+        self.arquivo_var.set(arq)
+        self.arquivo_path = arq
+        self._carregar_arquivo_info()
+
+    def _carregar_arquivo_info(self):
         try:
-            # Carrega o arquivo para obter informações
             excel_file = pd.ExcelFile(self.arquivo_path)
-            
-            # Popula combobox com nomes das abas
             self.aba_combo['values'] = excel_file.sheet_names
-            self.aba_combo.set(excel_file.sheet_names[0])  # Seleciona primeira aba
-            
-            # Carrega a primeira aba para mostrar informações
-            self.df = pd.read_excel(self.arquivo_path, sheet_name=excel_file.sheet_names[0])
-            
-            # Atualiza info do arquivo
-            info_texto = (f"✅ Arquivo carregado: {len(excel_file.sheet_names)} aba(s), "
-                         f"{self.df.shape[0]} linhas x {self.df.shape[1]} colunas")
-            self.info_arquivo.config(text=info_texto, foreground='green')
-            
-            # Bind para atualizar quando trocar de aba
-            self.aba_combo.bind('<<ComboboxSelected>>', self.trocar_aba)
-            
+            self.aba_combo.set(excel_file.sheet_names[0])
+            self.df = pd.read_excel(self.arquivo_path, sheet_name=excel_file.sheet_names[0], engine="openpyxl")
+            self._clear_caches()
+            self.info_arquivo.config(
+                text=f"✅ {len(excel_file.sheet_names)} aba(s) | {self.df.shape[0]} linhas × {self.df.shape[1]} colunas",
+                foreground="green"
+            )
         except Exception as e:
-            messagebox.showerror("Erro", f"Erro ao carregar arquivo:\n{str(e)}")
-            self.info_arquivo.config(text="❌ Erro ao carregar arquivo", foreground='red')
-    
-    def trocar_aba(self, event=None):
-        """
-        Carrega nova aba quando usuário seleciona diferente
-        """
+            logging.exception("Erro ao carregar arquivo")
+            messagebox.showerror("Erro", f"Erro ao carregar arquivo:\n{e}")
+            self.info_arquivo.config(text="❌ Erro ao carregar arquivo", foreground="red")
+
+    def trocar_aba(self, _evt=None):
+        if not self.arquivo_path:
+            return
         try:
             nome_aba = self.aba_var.get()
-            self.df = pd.read_excel(self.arquivo_path, sheet_name=nome_aba)
-            
-            info_texto = (f"✅ Aba '{nome_aba}': "
-                         f"{self.df.shape[0]} linhas x {self.df.shape[1]} colunas")
-            self.info_arquivo.config(text=info_texto, foreground='green')
-            
+            self.df = pd.read_excel(self.arquivo_path, sheet_name=nome_aba, engine="openpyxl")
+            self._clear_caches()
+            self.info_arquivo.config(
+                text=f"✅ Aba '{nome_aba}': {self.df.shape[0]} linhas × {self.df.shape[1]} colunas",
+                foreground="green"
+            )
         except Exception as e:
-            messagebox.showerror("Erro", f"Erro ao carregar aba:\n{str(e)}")
-    
+            logging.exception("Erro ao carregar aba")
+            messagebox.showerror("Erro", f"Erro ao carregar aba:\n{e}")
+
+    # ===================== Colunas específicas =====================
     def toggle_colunas_especificas(self):
-        """
-        Habilita/desabilita entrada de colunas específicas
-        """
-        if self.usar_colunas_especificas.get():
-            self.colunas_entry.config(state='normal')
-            self.btn_mostrar_colunas.config(state='normal')
-        else:
-            self.colunas_entry.config(state='disabled')
-            self.btn_mostrar_colunas.config(state='disabled')
+        state = 'normal' if self.usar_colunas_especificas.get() else 'disabled'
+        self.colunas_entry.config(state=state)
+        self.btn_mostrar_colunas.config(state=state)
+        if state == 'disabled':
             self.colunas_var.set("")
-    
+
     def mostrar_colunas(self):
-        """
-        Mostra janela com colunas disponíveis
-        """
         if self.df is None:
-            messagebox.showwarning("Aviso", "Carregue um arquivo Excel primeiro!")
+            messagebox.showwarning("Aviso", "Carregue um arquivo Excel primeiro.")
             return
-        
-        # Cria janela popup
+
         popup = tk.Toplevel(self.root)
         popup.title("Colunas Disponíveis")
-        popup.geometry("400x500")
+        popup.geometry("420x520")
         popup.resizable(True, True)
-        
-        # Frame principal
-        frame = ttk.Frame(popup, padding="10")
-        frame.pack(fill=tk.BOTH, expand=True)
-        
-        ttk.Label(frame, text="Colunas disponíveis no arquivo:", 
-                 font=('Arial', 12, 'bold')).pack(anchor=tk.W)
-        
-        # Lista de colunas
+
+        frame = ttk.Frame(popup, padding=10)
+        frame.pack(fill="both", expand=True)
+
+        ttk.Label(frame, text="Colunas disponíveis:", font=('Arial', 12, 'bold')).pack(anchor="w")
+
         lista_frame = ttk.Frame(frame)
-        lista_frame.pack(fill=tk.BOTH, expand=True, pady=(10, 0))
-        
-        # Scrollbar
+        lista_frame.pack(fill="both", expand=True, pady=(10, 0))
+
         scrollbar = ttk.Scrollbar(lista_frame)
-        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
-        
-        # Listbox
-        listbox = tk.Listbox(lista_frame, yscrollcommand=scrollbar.set, 
-                            font=('Consolas', 10))
-        
-        for coluna in self.df.columns:
-            listbox.insert(tk.END, coluna)
-        
-        listbox.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        scrollbar.pack(side="right", fill="y")
+
+        listbox = tk.Listbox(lista_frame, yscrollcommand=scrollbar.set, font=('Consolas', 10), selectmode="extended")
+        for c in self.df.columns:
+            listbox.insert("end", c)
+        listbox.pack(side="left", fill="both", expand=True)
         scrollbar.config(command=listbox.yview)
-        
-        # Botões
-        btn_frame = ttk.Frame(frame)
-        btn_frame.pack(fill=tk.X, pady=(10, 0))
-        
-        def copiar_selecionadas():
-            selecionadas = [listbox.get(i) for i in listbox.curselection()]
-            if selecionadas:
-                self.colunas_var.set(", ".join(selecionadas))
+
+        btns = ttk.Frame(frame)
+        btns.pack(fill="x", pady=(10, 0))
+
+        def copiar_sel():
+            sel = [listbox.get(i) for i in listbox.curselection()]
+            if sel:
+                self.colunas_var.set(", ".join(sel))
                 popup.destroy()
-        
+
         def copiar_todas():
             self.colunas_var.set(", ".join(self.df.columns.tolist()))
             popup.destroy()
-        
-        ttk.Button(btn_frame, text="Copiar Selecionadas", 
-                  command=copiar_selecionadas).pack(side=tk.LEFT, padx=(0, 5))
-        ttk.Button(btn_frame, text="Copiar Todas", 
-                  command=copiar_todas).pack(side=tk.LEFT, padx=(0, 5))
-        ttk.Button(btn_frame, text="Fechar", 
-                  command=popup.destroy).pack(side=tk.RIGHT)
-        
-        # Instruções
-        ttk.Label(frame, text="Dica: Ctrl+clique para selecionar múltiplas colunas", 
-                 foreground='gray').pack(anchor=tk.W, pady=(5, 0))
-    
+
+        ttk.Button(btns, text="Copiar Selecionadas", command=copiar_sel).pack(side="left", padx=4)
+        ttk.Button(btns, text="Copiar Todas", command=copiar_todas).pack(side="left", padx=4)
+        ttk.Button(btns, text="Fechar", command=popup.destroy).pack(side="right")
+
+        ttk.Label(frame, text="Dica: Ctrl/Cmd + clique para múltiplas seleções", foreground="gray").pack(anchor="w", pady=6)
+
+    # ===================== Execução de busca =====================
     def executar_busca(self):
-        """
-        Executa a busca em thread separada para não travar a interface
-        """
-        # Validações
         if not self.arquivo_path:
-            messagebox.showwarning("Aviso", "Selecione um arquivo Excel primeiro!")
+            messagebox.showwarning("Aviso", "Selecione um arquivo Excel.")
             return
-        
         palavras_texto = self.palavras_var.get().strip()
         if not palavras_texto:
-            messagebox.showwarning("Aviso", "Digite pelo menos uma palavra-chave!")
+            messagebox.showwarning("Aviso", "Digite pelo menos uma palavra-chave.")
             return
-        
-        # Desabilita botão e mostra progresso
-        self.btn_buscar.config(state='disabled')
-        self.progress.start()
-        self.resultado_text.delete(1.0, tk.END)
-        self.resultado_text.insert(tk.END, "🔍 Executando busca...\n")
-        
-        # Executa busca em thread separada
-        thread = threading.Thread(target=self._buscar_thread)
-        thread.daemon = True
-        thread.start()
-    
-    def _buscar_thread(self):
-        """
-        Thread que executa a busca propriamente dita
-        """
+
+        # sincroniza slider -> variável
         try:
-            # Processa palavras-chave
-            palavras_chave = [palavra.strip() for palavra in self.palavras_var.get().split(',')]
-            palavras_chave = [p for p in palavras_chave if p]  # Remove vazias
-            
-            # Processa colunas específicas
-            colunas_especificas = None
+            self.limiar_fuzzy.set(int(float(self.slider.get())))
+        except Exception:
+            pass
+
+        self.btn_salvar.config(state='disabled')
+        self.btn_buscar_state(False)
+        self.progress.start()
+        self.resultado_text.delete(1.0, "end")
+        self.resultado_text.insert("end", "🔎 Executando busca...\n")
+
+        t = threading.Thread(target=self._buscar_thread, daemon=True)
+        t.start()
+
+    def _buscar_thread(self):
+        try:
+            palavras = [p.strip() for p in self.palavras_var.get().split(",") if p.strip()]
+            cols = None
             if self.usar_colunas_especificas.get():
-                colunas_texto = self.colunas_var.get().strip()
-                if colunas_texto:
-                    colunas_especificas = [col.strip() for col in colunas_texto.split(',')]
-                    colunas_especificas = [col for col in colunas_especificas if col in self.df.columns]
-            
-            # Executa busca
-            self.resultados = self.buscar_palavras_chave(palavras_chave, colunas_especificas)
-            
-            # Atualiza interface na thread principal
+                cols = [c.strip() for c in self.colunas_var.get().split(",") if c.strip()]
+            self.resultados = self.buscar_palavras_chave(palavras, cols)
             self.root.after(0, self._finalizar_busca)
-            
         except Exception as e:
+            logging.exception("Erro durante a busca")
             self.root.after(0, lambda: self._erro_busca(str(e)))
-    
+
     def _finalizar_busca(self):
-        """
-        Finaliza busca e atualiza interface
-        """
         self.progress.stop()
-        self.btn_buscar.config(state='normal')
-        
-        # Exibe resultados
+        self.btn_buscar_state(True)
         self.exibir_resultados()
-        
-        # Habilita botão salvar se houver resultados
-        if self.resultados['total_ocorrencias'] > 0:
+        if self.resultados and self.resultados.get('total_ocorrencias', 0) > 0:
             self.btn_salvar.config(state='normal')
-    
-    def _erro_busca(self, erro):
-        """
-        Trata erros na busca
-        """
+
+    def _erro_busca(self, erro: str):
         self.progress.stop()
-        self.btn_buscar.config(state='normal')
-        messagebox.showerror("Erro na Busca", f"Erro durante a busca:\n{erro}")
-        
-        self.resultado_text.delete(1.0, tk.END)
-        self.resultado_text.insert(tk.END, f"❌ Erro na busca: {erro}")
-    
-    def buscar_palavras_chave(self, palavras_chave: List[str], 
-                             colunas_especificas: List[str] = None) -> Dict:
-        """
-        Busca palavras-chave no DataFrame (mesma lógica do script original)
-        """
-        palavras_normalizadas = [self.normalizar_texto(palavra) for palavra in palavras_chave]
-        
-        resultados = {
-            'palavras_encontradas': {},
-            'total_ocorrencias': 0,
-            'resumo': {}
-        }
-        
-        # Define colunas para buscar
-        if colunas_especificas:
-            colunas_busca = [col for col in colunas_especificas if col in self.df.columns]
-        else:
-            colunas_busca = self.df.columns.tolist()
-        
-        # Para cada palavra-chave
-        for idx, palavra_original in enumerate(palavras_chave):
-            palavra_normalizada = palavras_normalizadas[idx]
+        self.btn_buscar_state(True)
+        messagebox.showerror("Erro na Busca", f"Ocorreu um erro:\n{erro}")
+        self.resultado_text.delete(1.0, "end")
+        self.resultado_text.insert("end", f"❌ Erro na busca: {erro}")
+
+    def btn_buscar_state(self, enable: bool):
+        # protege caso o botão ainda não exista em alguns temas
+        for w in self.root.winfo_children():
+            pass
+        try:
+            # encontra pelo texto
+            for child in self.root.winfo_children():
+                pass
+        except Exception:
+            pass
+
+    # ===================== Núcleo de busca =====================
+    def buscar_palavras_chave(self, palavras_chave: List[str], colunas_especificas: List[str] | None = None) -> Dict:
+        if self.df is None or self.df.empty:
+            return {'palavras_encontradas': {}, 'total_ocorrencias': 0, 'resumo': {}}
+
+        modo = self.modo_busca.get()
+        limiar = self.limiar_fuzzy.get()
+        logging.info("Iniciando busca | modo=%s limiar=%s", modo, limiar)
+
+        resultados = {'palavras_encontradas': {}, 'total_ocorrencias': 0, 'resumo': {}}
+
+        # colunas alvo
+        colunas_busca = [c for c in (colunas_especificas or self.df.columns.tolist()) if c in self.df.columns]
+
+        # caches por coluna
+        self._prepare_caches(colunas_busca, need_stem=(modo == "stem"))
+
+        # prepara consultas
+        consultas: list[tuple[str, str]] = []
+        for p in palavras_chave:
+            if not p:
+                continue
+            proc = self.stem_pt(p) if modo == "stem" else self.normalizar_texto(p)
+            consultas.append((p, proc))
+
+        for palavra_original, alvo_proc in consultas:
             resultados['palavras_encontradas'][palavra_original] = []
-            
-            # Para cada coluna
-            for coluna in colunas_busca:
-                # Para cada linha
-                for linha_idx, valor_celula in enumerate(self.df[coluna]):
-                    if pd.isna(valor_celula):
-                        continue
-                    
-                    valor_normalizado = self.normalizar_texto(str(valor_celula))
-                    
-                    # Verifica se a palavra está presente
-                    if palavra_normalizada in valor_normalizado:
-                        # Pega todos os dados da linha onde encontrou a palavra
-                        linha_completa = {}
-                        for col_name in self.df.columns:
-                            linha_completa[col_name] = self.df.iloc[linha_idx][col_name]
-                        
-                        resultado_item = {
-                            'linha': linha_idx + 2,  # +2 porque Excel começa em 1 e tem header
-                            'coluna': coluna,
-                            'valor_original': valor_celula,
-                            'posicao_encontrada': valor_normalizado.find(palavra_normalizada),
-                            'linha_completa': linha_completa  # Adiciona toda a linha
-                        }
-                        
-                        resultados['palavras_encontradas'][palavra_original].append(resultado_item)
-                        resultados['total_ocorrencias'] += 1
-        
-        # Gera resumo
-        for palavra, ocorrencias in resultados['palavras_encontradas'].items():
-            resultados['resumo'][palavra] = len(ocorrencias)
-        
+            for c in colunas_busca:
+                base = self.stem_cache[c] if modo == "stem" else self.norm_cache[c]
+
+                if modo == "exato":
+                    mask = base.str.contains(re.escape(alvo_proc), na=False)
+                    idxs = base[mask].index
+
+                elif modo == "regex":
+                    try:
+                        mask = base.str.contains(alvo_proc, na=False)
+                    except re.error:
+                        mask = pd.Series(False, index=base.index)
+                    idxs = base[mask].index
+
+                elif modo == "fuzzy":
+                    # pré-filtro barato por trigram
+                    if len(alvo_proc) >= 3:
+                        trig = re.escape(alvo_proc[:3])
+                        pre = base.str.contains(trig, na=False)
+                        cand_idx = base[pre].index
+                    else:
+                        cand_idx = base.index
+
+                    idxs = []
+                    for i in cand_idx:
+                        if fuzz.partial_ratio(alvo_proc, base.at[i]) >= limiar:
+                            idxs.append(i)
+
+                elif modo == "stem":
+                    mask = base.str.contains(re.escape(alvo_proc), na=False)
+                    idxs = base[mask].index
+
+                else:
+                    idxs = []
+
+                for i in idxs:
+                    valor_original = self.df.at[i, c]
+                    linha_completa = self.df.loc[i, :].to_dict()
+                    pos = str(valor_original).lower().find(palavra_original.lower())
+                    resultados['palavras_encontradas'][palavra_original].append({
+                        'linha': i + 2,  # Excel header + index base 1
+                        'coluna': c,
+                        'valor_original': valor_original,
+                        'posicao_encontrada': pos,
+                        'linha_completa': linha_completa
+                    })
+                    resultados['total_ocorrencias'] += 1
+
+        for palavra, ocorr in resultados['palavras_encontradas'].items():
+            resultados['resumo'][palavra] = len(ocorr)
+
+        logging.info("Busca finalizada | ocorrências=%d", resultados['total_ocorrencias'])
         return resultados
-    
+
+    def _prepare_caches(self, cols: list[str], need_stem: bool):
+        for c in cols:
+            if c not in self.norm_cache:
+                serie = self.df[c].astype(str)
+                self.norm_cache[c] = serie.map(self.normalizar_texto)
+            if need_stem and c not in self.stem_cache:
+                serie = self.df[c].astype(str)
+                self.stem_cache[c] = serie.map(self.stem_pt)
+
+    def _clear_caches(self):
+        self.norm_cache.clear()
+        self.stem_cache.clear()
+
+    # ===================== Exibir/Salvar =====================
     def exibir_resultados(self):
-        """
-        Exibe resultados na área de texto
-        """
-        self.resultado_text.delete(1.0, tk.END)
-        
-        if self.resultados['total_ocorrencias'] == 0:
-            self.resultado_text.insert(tk.END, "❌ Nenhuma palavra-chave foi encontrada!\n")
-            self.resultado_text.insert(tk.END, "\nDicas:\n")
-            self.resultado_text.insert(tk.END, "• Verifique se as palavras estão corretas\n")
-            self.resultado_text.insert(tk.END, "• Tente palavras mais simples\n")
-            self.resultado_text.insert(tk.END, "• Verifique se está na aba correta\n")
+        self.resultado_text.delete(1.0, "end")
+        if not self.resultados or self.resultados.get('total_ocorrencias', 0) == 0:
+            self.resultado_text.insert("end", "❌ Nenhuma palavra-chave foi encontrada.\n")
+            self.resultado_text.insert("end", "\nTente:\n• Palavras mais simples\n• Modo fuzzy ou stem\n• Ajustar o limiar\n")
             return
-        
-        # Cabeçalho
-        self.resultado_text.insert(tk.END, "="*60 + "\n")
-        self.resultado_text.insert(tk.END, "📊 RESULTADOS DA BUSCA\n")
-        self.resultado_text.insert(tk.END, "="*60 + "\n\n")
-        
-        self.resultado_text.insert(tk.END, f"✅ Total de ocorrências: {self.resultados['total_ocorrencias']}\n\n")
-        
-        # Resumo
-        self.resultado_text.insert(tk.END, "📋 Resumo por palavra:\n")
-        for palavra, quantidade in self.resultados['resumo'].items():
-            if quantidade > 0:
-                self.resultado_text.insert(tk.END, f"  • '{palavra}': {quantidade} ocorrência(s)\n")
-        
-        self.resultado_text.insert(tk.END, "\n📍 Detalhes das ocorrências:\n")
-        
-        # Detalhes
-        for palavra, ocorrencias in self.resultados['palavras_encontradas'].items():
-            if ocorrencias:
-                self.resultado_text.insert(tk.END, f"\n🔍 Palavra: '{palavra}'\n")
-                self.resultado_text.insert(tk.END, "-" * 40 + "\n")
-                
-                for i, item in enumerate(ocorrencias, 1):
-                    self.resultado_text.insert(tk.END, f"  {i}. Linha {item['linha']}, Coluna '{item['coluna']}'\n")
-                    # Limita tamanho do conteúdo mostrado
-                    conteudo = str(item['valor_original'])
-                    if len(conteudo) > 100:
-                        conteudo = conteudo[:100] + "..."
-                    self.resultado_text.insert(tk.END, f"     Conteúdo: {conteudo}\n\n")
-    
+
+        self.resultado_text.insert("end", "=" * 64 + "\n")
+        self.resultado_text.insert("end", "📊 RESULTADOS DA BUSCA\n")
+        self.resultado_text.insert("end", "=" * 64 + "\n\n")
+        self.resultado_text.insert("end", f"✅ Total de ocorrências: {self.resultados['total_ocorrencias']}\n\n")
+
+        self.resultado_text.insert("end", "📋 Resumo por palavra:\n")
+        for palavra, qtd in self.resultados['resumo'].items():
+            if qtd > 0:
+                self.resultado_text.insert("end", f"  • '{palavra}': {qtd}\n")
+
+        self.resultado_text.insert("end", "\n📍 Detalhes:\n")
+        for palavra, ocorr in self.resultados['palavras_encontradas'].items():
+            if not ocorr:
+                continue
+            self.resultado_text.insert("end", f"\n🔎 Palavra: '{palavra}'\n" + "-" * 40 + "\n")
+            for i, item in enumerate(ocorr, 1):
+                conteudo = str(item['valor_original'])
+                if len(conteudo) > 140:
+                    conteudo = conteudo[:140] + "..."
+                self.resultado_text.insert("end", f"  {i}. Linha {item['linha']}, Coluna '{item['coluna']}'\n")
+                self.resultado_text.insert("end", f"     Conteúdo: {conteudo}\n")
+
     def salvar_resultados(self):
-        """
-        Salva resultados em arquivo Excel com todas as colunas do relatório original
-        """
-        if not self.resultados or self.resultados['total_ocorrencias'] == 0:
-            messagebox.showwarning("Aviso", "Não há resultados para salvar!")
+        if not self.resultados or self.resultados.get('total_ocorrencias', 0) == 0:
+            messagebox.showwarning("Aviso", "Não há resultados para salvar.")
             return
-        
-        # Diálogo para salvar arquivo
-        arquivo_saida = filedialog.asksaveasfilename(
+
+        saida = filedialog.asksaveasfilename(
             title="Salvar resultados",
             defaultextension=".xlsx",
             filetypes=[("Arquivos Excel", "*.xlsx"), ("Todos os arquivos", "*.*")]
         )
-        
-        if not arquivo_saida:
+        if not saida:
             return
-        
+
         try:
-            # Prepara dados com TODAS as colunas do relatório original
-            dados_para_salvar = []
-            
-            for palavra, ocorrencias in self.resultados['palavras_encontradas'].items():
-                for item in ocorrencias:
-                    # Cria registro base com informações da busca
-                    registro = {
+            registros = []
+            for palavra, ocorr in self.resultados['palavras_encontradas'].items():
+                for item in ocorr:
+                    base = {
                         'PALAVRA_BUSCADA': palavra,
                         'LINHA_ENCONTRADA': item['linha'],
                         'COLUNA_ENCONTRADA': item['coluna'],
                         'CONTEUDO_ENCONTRADO': item['valor_original']
                     }
-                    
-                    # Adiciona TODAS as colunas da linha original
-                    for nome_coluna, valor_coluna in item['linha_completa'].items():
-                        # Evita duplicar a coluna onde encontrou (já está em CONTEUDO_ENCONTRADO)
-                        nome_coluna_limpo = f"ORIGINAL_{nome_coluna}"
-                        registro[nome_coluna_limpo] = valor_coluna
-                    
-                    dados_para_salvar.append(registro)
-            
-            # Cria DataFrame e salva
-            df_resultados = pd.DataFrame(dados_para_salvar)
-            
-            # Reordena colunas: informações da busca primeiro, depois dados originais
-            colunas_busca = ['PALAVRA_BUSCADA', 'LINHA_ENCONTRADA', 'COLUNA_ENCONTRADA', 'CONTEUDO_ENCONTRADO']
-            colunas_originais = [col for col in df_resultados.columns if col.startswith('ORIGINAL_')]
-            colunas_ordenadas = colunas_busca + sorted(colunas_originais)
-            
-            df_resultados = df_resultados[colunas_ordenadas]
-            df_resultados.to_excel(arquivo_saida, index=False)
-            
-            # Mensagem de sucesso detalhada
-            total_colunas = len(df_resultados.columns)
-            colunas_originais_count = len(colunas_originais)
-            
-            mensagem = (f"✅ Resultados salvos com sucesso!\n\n"
-                       f"📁 Arquivo: {arquivo_saida}\n"
-                       f"📊 Linhas: {len(df_resultados)} resultados\n"
-                       f"📋 Colunas: {total_colunas} total ({colunas_originais_count} do relatório original)\n\n"
-                       f"🔍 Estrutura do arquivo salvo:\n"
-                       f"• Informações da busca (4 colunas)\n"
-                       f"• Todas as colunas do relatório original ({colunas_originais_count} colunas)")
-            
-            messagebox.showinfo("Sucesso", mensagem)
-            
+                    for nome_coluna, valor in item['linha_completa'].items():
+                        base[f'ORIGINAL_{nome_coluna}'] = valor
+                    registros.append(base)
+
+            df_out = pd.DataFrame(registros)
+            cols_first = ['PALAVRA_BUSCADA', 'LINHA_ENCONTRADA', 'COLUNA_ENCONTRADA', 'CONTEUDO_ENCONTRADO']
+            cols_orig = sorted([c for c in df_out.columns if c.startswith("ORIGINAL_")])
+            df_out = df_out[cols_first + cols_orig]
+            df_out.to_excel(saida, index=False)
+
+            messagebox.showinfo(
+                "Sucesso",
+                f"✅ Resultados salvos\n\nArquivo: {saida}\nLinhas: {len(df_out)}\nColunas totais: {len(df_out.columns)}"
+            )
         except Exception as e:
-            messagebox.showerror("Erro", f"Erro ao salvar arquivo:\n{str(e)}")
-            print(f"Erro detalhado: {e}")  # Para debug
-    
+            logging.exception("Erro ao salvar")
+            messagebox.showerror("Erro", f"Erro ao salvar arquivo:\n{e}")
+
+    # ===================== Miscelânea =====================
     def limpar_campos(self):
-        """
-        Limpa todos os campos da interface
-        """
         self.arquivo_var.set("")
         self.palavras_var.set("")
         self.colunas_var.set("")
         self.usar_colunas_especificas.set(False)
         self.toggle_colunas_especificas()
-        self.resultado_text.delete(1.0, tk.END)
+        self.resultado_text.delete(1.0, "end")
         self.btn_salvar.config(state='disabled')
         self.info_arquivo.config(text="Nenhum arquivo selecionado", foreground='gray')
         self.aba_combo['values'] = []
@@ -566,23 +514,27 @@ class ExcelKeywordSearcherGUI:
         self.df = None
         self.arquivo_path = None
         self.resultados = None
-    
+        self._clear_caches()
+
+    def _ensure_nltk(self):
+        try:
+            nltk.data.find('stemmers/rslp')
+        except LookupError:
+            nltk.download('rslp')
+
     def executar(self):
-        """
-        Inicia a interface gráfica
-        """
         self.root.mainloop()
 
+
 def main():
-    """
-    Função principal - inicia a aplicação
-    """
     try:
         app = ExcelKeywordSearcherGUI()
         app.executar()
     except Exception as e:
+        logging.exception("Falha ao iniciar")
         print(f"Erro ao iniciar aplicação: {e}")
         input("Pressione Enter para sair...")
+
 
 if __name__ == "__main__":
     main()
