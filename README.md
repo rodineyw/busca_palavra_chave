@@ -26,7 +26,7 @@ Também permite **salvar os resultados** em um novo Excel com todas as colunas o
 
 Abra o arquivo `Busca por Palavra-chave.exe`.
 
-![Tela inicial](/imagens/tela_inicial.png)
+![Tela inicial](imagens/tela_inicial.png)
 
 ---
 
@@ -34,7 +34,7 @@ Abra o arquivo `Busca por Palavra-chave.exe`.
 
 Clique em **Selecionar Arquivo** e escolha seu Excel.
 
-![Seleção de arquivo](/imagens/selecionar_arquivo.png)
+![Seleção de arquivo](imagens/selecionar_arquivo.png)
 
 ---
 
@@ -42,7 +42,7 @@ Clique em **Selecionar Arquivo** e escolha seu Excel.
 
 No campo “Aba”, escolha a planilha onde deseja buscar.
 
-![Seleção de aba](/imagens/selecionar_aba.png)
+![Seleção de aba](imagens/selecionar_aba.png)
 
 ---
 
@@ -56,7 +56,7 @@ arquivamento, desarquivamento, arquivar
 
 ```
 
-![Inserindo palavras](/imagens/inserir_palavras.png)
+![Inserindo palavras](imagens/inserir_palavras.png)
 
 ---
 
@@ -70,7 +70,7 @@ arquivamento, desarquivamento, arquivar
 
 - **Colunas específicas (opcional)**: marque a opção, clique em **Ver Colunas** e selecione.
 
-![Opções avançadas](/imagens/opcoes_busca.png)
+![Opções avançadas](imagens/opcoes_busca.png)
 
 ---
 
@@ -78,7 +78,7 @@ arquivamento, desarquivamento, arquivar
 
 Clique em **Buscar** e aguarde.
 
-![Progresso da busca](/imagens/busca_em_andamento.png)
+![Progresso da busca](imagens/busca_em_andamento.png)
 
 ---
 
@@ -86,7 +86,7 @@ Clique em **Buscar** e aguarde.
 
 Veja o total de ocorrências, resumo por palavra e detalhes de cada linha.
 
-![Resultados](/imagens/resultados_busca.png)
+![Resultados](imagens/resultados_busca.png)
 
 ---
 
@@ -94,7 +94,7 @@ Veja o total de ocorrências, resumo por palavra e detalhes de cada linha.
 
 Clique em **Salvar Resultados** e escolha onde gravar.
 
-![Salvar resultados](/imagens/salvar_resultados.png)
+![Salvar resultados](imagens/salvar_resultados.png)
 
 ---
 
