@@ -66,7 +66,7 @@ arquivamento, desarquivamento, arquivar
   - `exato` → Igualdade literal.
   - `padrão` → Padrões avançados.
   - `similaridade` → Palavras semelhantes (ajuste no slider *% de Similaridade*).
-  - `redical` → Radicais das palavras.
+  - `radical` → Radicais das palavras.
 
 - **Colunas específicas (opcional)**: marque a opção, clique em **Ver Colunas** e selecione.
 
