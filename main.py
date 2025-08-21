@@ -110,7 +110,7 @@ class ExcelKeywordSearcherGUI:
 
         # Modo
         ttk.Label(lf_ops, text="Modo de busca:").grid(row=0, column=0, sticky="w")
-        self.modo_busca = tk.StringVar(value="similar")  # exato | regex | fuzzy | stem
+        self.modo_busca = tk.StringVar(value="similaridade") 
         ttk.Combobox(lf_ops, textvariable=self.modo_busca, state="readonly",
                      values=["exato", "padrão", "similaridade", "radical"]).grid(row=0, column=1, sticky="ew", padx=(6, 12))
 
@@ -125,9 +125,6 @@ class ExcelKeywordSearcherGUI:
             lf_ops, from_=60, to=95, orient="horizontal",
             command=self._on_slider_change
         )
-        
-        self.slider = ttk.Scale(lf_ops, from_=60, to=95, orient="horizontal",
-                                command=lambda v: self.lbl_limiar.config(text=str(int(float(v)))))
         self.slider.grid(row=0, column=3, sticky="ew", padx=6)
         self.slider.set(self.limiar_fuzzy.get())
 
@@ -147,7 +144,8 @@ class ExcelKeywordSearcherGUI:
         # Ações
         acts = ttk.Frame(main)
         acts.grid(row=5, column=0, columnspan=3, pady=8)
-        ttk.Button(acts, text="🔍 Buscar", command=self.executar_busca, style='Accent.TButton').pack(side="left", padx=5)
+        self.btn_buscar = ttk.Button(acts, text="🔍 Buscar", command=self.executar_busca)
+        self.btn_buscar.pack(side="left", padx=5)
         ttk.Button(acts, text="🗑️ Limpar", command=self.limpar_campos).pack(side="left", padx=5)
         self.btn_salvar = ttk.Button(acts, text="💾 Salvar Resultados", command=self.salvar_resultados, state='disabled')
         self.btn_salvar.pack(side="left", padx=5)
@@ -280,14 +278,13 @@ class ExcelKeywordSearcherGUI:
             messagebox.showwarning("Aviso", "Digite pelo menos uma palavra-chave.")
             return
 
-        # sincroniza slider -> variável
         try:
             self.limiar_fuzzy.set(int(float(self.slider.get())))
         except Exception:
             pass
 
         self.btn_salvar.config(state='disabled')
-        self.btn_buscar_state(False)
+        self.btn_buscar.config(state='disabled')
         self.progress.start()
         self.resultado_text.delete(1.0, "end")
         self.resultado_text.insert("end", "🔎 Executando busca...\n")
@@ -303,34 +300,23 @@ class ExcelKeywordSearcherGUI:
                 cols = [c.strip() for c in self.colunas_var.get().split(",") if c.strip()]
             self.resultados = self.buscar_palavras_chave(palavras, cols)
             self.root.after(0, self._finalizar_busca)
-        except Exception:
+        except Exception as e:
             logging.exception("Erro durante a busca")
             self.root.after(0, lambda: self._erro_busca(str(e)))
 
     def _finalizar_busca(self):
         self.progress.stop()
-        self.btn_buscar_state(True)
+        self.btn_buscar.config(state='normal')
         self.exibir_resultados()
         if self.resultados and self.resultados.get('total_ocorrencias', 0) > 0:
             self.btn_salvar.config(state='normal')
 
     def _erro_busca(self, erro: str):
         self.progress.stop()
-        self.btn_buscar_state(True)
+        self.btn_buscar.config(state='normal')
         messagebox.showerror("Erro na Busca", f"Ocorreu um erro:\n{erro}")
         self.resultado_text.delete(1.0, "end")
         self.resultado_text.insert("end", f"❌ Erro na busca: {erro}")
-
-    def btn_buscar_state(self, enable: bool):
-        # protege caso o botão ainda não exista em alguns temas
-        for w in self.root.winfo_children():
-            pass
-        try:
-            # encontra pelo texto
-            for child in self.root.winfo_children():
-                pass
-        except Exception:
-            pass
 
     # ===================== Núcleo de busca =====================
     def buscar_palavras_chave(self, palavras_chave: List[str], colunas_especificas: List[str] | None = None) -> Dict:
@@ -343,38 +329,36 @@ class ExcelKeywordSearcherGUI:
 
         resultados = {'palavras_encontradas': {}, 'total_ocorrencias': 0, 'resumo': {}}
 
-        # colunas alvo
         colunas_busca = [c for c in (colunas_especificas or self.df.columns.tolist()) if c in self.df.columns]
 
-        # caches por coluna
-        self._prepare_caches(colunas_busca, need_stem=(modo == "stem"))
+        need_stem = (modo == "radical")
+        self._prepare_caches(colunas_busca, need_stem=need_stem)
 
-        # prepara consultas
         consultas: list[tuple[str, str]] = []
         for p in palavras_chave:
             if not p:
                 continue
-            proc = self.stem_pt(p) if modo == "stem" else self.normalizar_texto(p)
+            proc = self.stem_pt(p) if modo == "radical" else self.normalizar_texto(p)
             consultas.append((p, proc))
 
         for palavra_original, alvo_proc in consultas:
             resultados['palavras_encontradas'][palavra_original] = []
             for c in colunas_busca:
-                base = self.stem_cache[c] if modo == "stem" else self.norm_cache[c]
+                base = self.stem_cache[c] if modo == "radical" else self.norm_cache[c]
+                idxs = []
 
                 if modo == "exato":
                     mask = base.str.contains(re.escape(alvo_proc), na=False)
                     idxs = base[mask].index
 
-                elif modo == "regex":
+                elif modo == "padrão":
                     try:
-                        mask = base.str.contains(alvo_proc, na=False)
+                        mask = base.str.contains(alvo_proc, na=False, regex=True)
                     except re.error:
                         mask = pd.Series(False, index=base.index)
                     idxs = base[mask].index
 
-                elif modo == "fuzzy":
-                    # pré-filtro barato por trigram
+                elif modo == "similaridade":
                     if len(alvo_proc) >= 3:
                         trig = re.escape(alvo_proc[:3])
                         pre = base.str.contains(trig, na=False)
@@ -382,24 +366,20 @@ class ExcelKeywordSearcherGUI:
                     else:
                         cand_idx = base.index
 
-                    idxs = []
                     for i in cand_idx:
                         if fuzz.partial_ratio(alvo_proc, base.at[i]) >= limiar:
                             idxs.append(i)
 
-                elif modo == "stem":
+                elif modo == "radical":
                     mask = base.str.contains(re.escape(alvo_proc), na=False)
                     idxs = base[mask].index
-
-                else:
-                    idxs = []
 
                 for i in idxs:
                     valor_original = self.df.at[i, c]
                     linha_completa = self.df.loc[i, :].to_dict()
                     pos = str(valor_original).lower().find(palavra_original.lower())
                     resultados['palavras_encontradas'][palavra_original].append({
-                        'linha': i + 2,  # Excel header + index base 1
+                        'linha': i + 2,
                         'coluna': c,
                         'valor_original': valor_original,
                         'posicao_encontrada': pos,
@@ -431,7 +411,7 @@ class ExcelKeywordSearcherGUI:
         self.resultado_text.delete(1.0, "end")
         if not self.resultados or self.resultados.get('total_ocorrencias', 0) == 0:
             self.resultado_text.insert("end", "❌ Nenhuma palavra-chave foi encontrada.\n")
-            self.resultado_text.insert("end", "\nTente:\n• Palavras mais simples\n• Modo fuzzy ou stem\n• Ajustar o limiar\n")
+            self.resultado_text.insert("end", "\nTente:\n• Palavras mais simples\n• Modo 'similaridade' ou 'radical'\n• Ajustar o limiar de similaridade\n")
             return
 
         self.resultado_text.insert("end", "=" * 64 + "\n")
@@ -442,7 +422,7 @@ class ExcelKeywordSearcherGUI:
         self.resultado_text.insert("end", "📋 Resumo por palavra:\n")
         for palavra, qtd in self.resultados['resumo'].items():
             if qtd > 0:
-                self.resultado_text.insert("end", f"  • '{palavra}': {qtd}\n")
+                self.resultado_text.insert("end", f"   • '{palavra}': {qtd}\n")
 
         self.resultado_text.insert("end", "\n📍 Detalhes:\n")
         for palavra, ocorr in self.resultados['palavras_encontradas'].items():
@@ -453,8 +433,8 @@ class ExcelKeywordSearcherGUI:
                 conteudo = str(item['valor_original'])
                 if len(conteudo) > 140:
                     conteudo = conteudo[:140] + "..."
-                self.resultado_text.insert("end", f"  {i}. Linha {item['linha']}, Coluna '{item['coluna']}'\n")
-                self.resultado_text.insert("end", f"     Conteúdo: {conteudo}\n")
+                self.resultado_text.insert("end", f"   {i}. Linha {item['linha']}, Coluna '{item['coluna']}'\n")
+                self.resultado_text.insert("end", f"      Conteúdo: {conteudo}\n")
 
     def salvar_resultados(self):
         if not self.resultados or self.resultados.get('total_ocorrencias', 0) == 0:
@@ -518,7 +498,9 @@ class ExcelKeywordSearcherGUI:
         try:
             nltk.data.find('stemmers/rslp')
         except LookupError:
+            logging.info("Componente 'rslp' do NLTK não encontrado. Baixando agora...")
             nltk.download('rslp')
+            logging.info("Download do 'rslp' concluído.")
 
     def executar(self):
         self.root.mainloop()
@@ -530,8 +512,7 @@ def main():
         app.executar()
     except Exception as e:
         logging.exception("Falha ao iniciar")
-        print(f"Erro ao iniciar aplicação: {e}")
-        input("Pressione Enter para sair...")
+        messagebox.showerror("Erro Crítico", f"Ocorreu um erro fatal ao iniciar a aplicação:\n\n{e}\n\nVerifique os logs para mais detalhes.")
 
 
 if __name__ == "__main__":
