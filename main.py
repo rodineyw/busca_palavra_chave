@@ -4,7 +4,7 @@ import threading
 import tkinter as tk
 import unicodedata
 from tkinter import filedialog, messagebox, scrolledtext, ttk
-from typing import Dict, List
+from typing import Dict, List, Set
 
 import nltk
 import pandas as pd
@@ -97,10 +97,11 @@ class ExcelKeywordSearcherGUI:
         lf_pal.grid(row=3, column=0, columnspan=3, sticky="ew", pady=(0, 8))
         lf_pal.columnconfigure(0, weight=1)
 
-        ttk.Label(lf_pal, text="Digite separadas por vírgula:").grid(row=0, column=0, sticky="w")
+        ### ALTERADO ### - Atualizei as instruções para o usuário
+        ttk.Label(lf_pal, text="Use vírgula (,) para 'OU' e E-comercial (&) para 'E':").grid(row=0, column=0, sticky="w")
         self.palavras_var = tk.StringVar()
         ttk.Entry(lf_pal, textvariable=self.palavras_var).grid(row=1, column=0, sticky="ew", pady=4)
-        ttk.Label(lf_pal, text="Ex.: desarquivamento, arquivamento, arquivar", foreground="gray").grid(row=2, column=0, sticky="w")
+        ttk.Label(lf_pal, text="Ex: arquiv & definit, transito & julgado, liminar", foreground="gray").grid(row=2, column=0, sticky="w")
 
         # Opções
         lf_ops = ttk.LabelFrame(main, text="⚙️ Opções", padding=10)
@@ -169,7 +170,6 @@ class ExcelKeywordSearcherGUI:
             val = self.limiar_fuzzy.get()
         self.limiar_fuzzy.set(val)
         self.lbl_limiar.config(text=str(val))
-
 
     # ===================== Arquivo/Aba =====================
     def selecionar_arquivo(self):
@@ -294,11 +294,12 @@ class ExcelKeywordSearcherGUI:
 
     def _buscar_thread(self):
         try:
-            palavras = [p.strip() for p in self.palavras_var.get().split(",") if p.strip()]
+            ### ALTERADO ### - Passamos a query inteira em vez de uma lista de palavras
+            query_string = self.palavras_var.get()
             cols = None
             if self.usar_colunas_especificas.get():
                 cols = [c.strip() for c in self.colunas_var.get().split(",") if c.strip()]
-            self.resultados = self.buscar_palavras_chave(palavras, cols)
+            self.resultados = self.buscar_palavras_chave(query_string, cols)
             self.root.after(0, self._finalizar_busca)
         except Exception as e:
             logging.exception("Erro durante a busca")
@@ -319,79 +320,110 @@ class ExcelKeywordSearcherGUI:
         self.resultado_text.insert("end", f"❌ Erro na busca: {erro}")
 
     # ===================== Núcleo de busca =====================
-    def buscar_palavras_chave(self, palavras_chave: List[str], colunas_especificas: List[str] | None = None) -> Dict:
+    ### ALTERADO ### - A função agora recebe a string da query e a lógica foi refeita
+    def buscar_palavras_chave(self, query_string: str, colunas_especificas: List[str] | None = None) -> Dict:
         if self.df is None or self.df.empty:
             return {'palavras_encontradas': {}, 'total_ocorrencias': 0, 'resumo': {}}
 
         modo = self.modo_busca.get()
         limiar = self.limiar_fuzzy.get()
-        logging.info("Iniciando busca | modo=%s limiar=%s", modo, limiar)
+        logging.info("Iniciando busca | query='%s' modo=%s limiar=%s", query_string, modo, limiar)
 
         resultados = {'palavras_encontradas': {}, 'total_ocorrencias': 0, 'resumo': {}}
+        indices_encontrados_geral: Set[int] = set()
 
         colunas_busca = [c for c in (colunas_especificas or self.df.columns.tolist()) if c in self.df.columns]
 
         need_stem = (modo == "radical")
         self._prepare_caches(colunas_busca, need_stem=need_stem)
 
-        consultas: list[tuple[str, str]] = []
-        for p in palavras_chave:
-            if not p:
-                continue
-            proc = self.stem_pt(p) if modo == "radical" else self.normalizar_texto(p)
-            consultas.append((p, proc))
+        # 1. Parse da query em grupos de busca
+        termos_or = [term.strip() for term in query_string.split(',')]
+        grupos_de_busca = []
+        for term in termos_or:
+            keywords_and = [kw.strip() for kw in term.split('&') if kw.strip()]
+            if keywords_and:
+                grupos_de_busca.append(keywords_and)
+        
+        # 2. Executa a busca para cada grupo
+        for grupo in grupos_de_busca:
+            chave_resultado = " & ".join(grupo)
+            resultados['palavras_encontradas'][chave_resultado] = []
 
-        for palavra_original, alvo_proc in consultas:
-            resultados['palavras_encontradas'][palavra_original] = []
-            for c in colunas_busca:
-                base = self.stem_cache[c] if modo == "radical" else self.norm_cache[c]
-                idxs = []
+            for col in colunas_busca:
+                base = self.stem_cache[col] if modo == "radical" else self.norm_cache[col]
+                
+                # Encontra os índices que correspondem a TODOS os termos do grupo nesta coluna
+                if modo == "similaridade":
+                    # Modo iterativo para similaridade
+                    candidatos_idx = base.index.tolist()
+                    for palavra in grupo:
+                        alvo_proc = self.normalizar_texto(palavra)
+                        if not alvo_proc: continue
+                        
+                        novos_candidatos = []
+                        for i in candidatos_idx:
+                            if fuzz.partial_ratio(alvo_proc, base.at[i]) >= limiar:
+                                novos_candidatos.append(i)
+                        candidatos_idx = novos_candidatos
+                        if not candidatos_idx: break 
+                    idxs = pd.Index(candidatos_idx)
 
-                if modo == "exato":
-                    mask = base.str.contains(re.escape(alvo_proc), na=False)
-                    idxs = base[mask].index
+                else:
+                    # Modo baseado em máscara para os demais (muito mais rápido)
+                    mascara_grupo = pd.Series(True, index=base.index)
+                    for palavra in grupo:
+                        if modo == "radical":
+                            alvo_proc = self.stem_pt(palavra)
+                        else:
+                            alvo_proc = self.normalizar_texto(palavra)
+                        
+                        if not alvo_proc: continue
 
-                elif modo == "padrão":
-                    try:
-                        mask = base.str.contains(alvo_proc, na=False, regex=True)
-                    except re.error:
-                        mask = pd.Series(False, index=base.index)
-                    idxs = base[mask].index
-
-                elif modo == "similaridade":
-                    if len(alvo_proc) >= 3:
-                        trig = re.escape(alvo_proc[:3])
-                        pre = base.str.contains(trig, na=False)
-                        cand_idx = base[pre].index
-                    else:
-                        cand_idx = base.index
-
-                    for i in cand_idx:
-                        if fuzz.partial_ratio(alvo_proc, base.at[i]) >= limiar:
-                            idxs.append(i)
-
-                elif modo == "radical":
-                    mask = base.str.contains(re.escape(alvo_proc), na=False)
-                    idxs = base[mask].index
-
+                        if modo == "exato":
+                            mascara_palavra = base.str.contains(re.escape(alvo_proc), na=False)
+                        elif modo == "padrão":
+                             try:
+                                mascara_palavra = base.str.contains(alvo_proc, na=False, regex=True)
+                             except re.error:
+                                mascara_palavra = pd.Series(False, index=base.index)
+                        elif modo == "radical":
+                            mascara_palavra = base.str.contains(re.escape(alvo_proc), na=False)
+                        
+                        mascara_grupo &= mascara_palavra
+                    idxs = base[mascara_grupo].index
+                
+                # 3. Adiciona os resultados encontrados
                 for i in idxs:
-                    valor_original = self.df.at[i, c]
+                    # Evita duplicar a mesma linha nos resultados totais se já foi encontrada
+                    if (i, col) in indices_encontrados_geral:
+                        continue
+                    
+                    indices_encontrados_geral.add((i, col))
+                    
+                    valor_original = self.df.at[i, col]
                     linha_completa = self.df.loc[i, :].to_dict()
-                    pos = str(valor_original).lower().find(palavra_original.lower())
-                    resultados['palavras_encontradas'][palavra_original].append({
+                    pos = str(valor_original).lower().find(grupo[0].lower())
+
+                    resultados['palavras_encontradas'][chave_resultado].append({
                         'linha': i + 2,
-                        'coluna': c,
+                        'coluna': col,
                         'valor_original': valor_original,
                         'posicao_encontrada': pos,
                         'linha_completa': linha_completa
                     })
-                    resultados['total_ocorrencias'] += 1
-
-        for palavra, ocorr in resultados['palavras_encontradas'].items():
-            resultados['resumo'][palavra] = len(ocorr)
-
+        
+        # 4. Calcula os totais
+        total = 0
+        for chave, lista in resultados['palavras_encontradas'].items():
+            qtd = len(lista)
+            resultados['resumo'][chave] = qtd
+            total += qtd
+        resultados['total_ocorrencias'] = total
+        
         logging.info("Busca finalizada | ocorrências=%d", resultados['total_ocorrencias'])
         return resultados
+
 
     def _prepare_caches(self, cols: list[str], need_stem: bool):
         for c in cols:
@@ -419,7 +451,7 @@ class ExcelKeywordSearcherGUI:
         self.resultado_text.insert("end", "=" * 64 + "\n\n")
         self.resultado_text.insert("end", f"✅ Total de ocorrências: {self.resultados['total_ocorrencias']}\n\n")
 
-        self.resultado_text.insert("end", "📋 Resumo por palavra:\n")
+        self.resultado_text.insert("end", "📋 Resumo por termo de busca:\n")
         for palavra, qtd in self.resultados['resumo'].items():
             if qtd > 0:
                 self.resultado_text.insert("end", f"   • '{palavra}': {qtd}\n")
@@ -428,7 +460,7 @@ class ExcelKeywordSearcherGUI:
         for palavra, ocorr in self.resultados['palavras_encontradas'].items():
             if not ocorr:
                 continue
-            self.resultado_text.insert("end", f"\n🔎 Palavra: '{palavra}'\n" + "-" * 40 + "\n")
+            self.resultado_text.insert("end", f"\n🔎 Termo: '{palavra}'\n" + "-" * 40 + "\n")
             for i, item in enumerate(ocorr, 1):
                 conteudo = str(item['valor_original'])
                 if len(conteudo) > 140:
@@ -454,7 +486,7 @@ class ExcelKeywordSearcherGUI:
             for palavra, ocorr in self.resultados['palavras_encontradas'].items():
                 for item in ocorr:
                     base = {
-                        'PALAVRA_BUSCADA': palavra,
+                        'TERMO_BUSCADO': palavra,
                         'LINHA_ENCONTRADA': item['linha'],
                         'COLUNA_ENCONTRADA': item['coluna'],
                         'CONTEUDO_ENCONTRADO': item['valor_original']
@@ -464,7 +496,7 @@ class ExcelKeywordSearcherGUI:
                     registros.append(base)
 
             df_out = pd.DataFrame(registros)
-            cols_first = ['PALAVRA_BUSCADA', 'LINHA_ENCONTRADA', 'COLUNA_ENCONTRADA', 'CONTEUDO_ENCONTRADO']
+            cols_first = ['TERMO_BUSCADO', 'LINHA_ENCONTRADA', 'COLUNA_ENCONTRADA', 'CONTEUDO_ENCONTRADO']
             cols_orig = sorted([c for c in df_out.columns if c.startswith("ORIGINAL_")])
             df_out = df_out[cols_first + cols_orig]
             df_out.to_excel(saida, index=False)
